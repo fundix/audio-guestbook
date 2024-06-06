@@ -53,19 +53,21 @@
 
 // GUItool: begin automatically generated code
 AudioInputI2S            i2sIn;           //xy=388,136
-AudioRecordQueue         queue1;         //xy=545,134
-AudioSynthWaveform       waveform1;      //xy=558,187
-AudioPlaySdWav           playWav1;     //xy=568,235
-AudioMixer4              mixer;          //xy=742,210
-AudioOutputI2S           i2sOut;           //xy=929,215
+AudioRecordQueue         queue1;          //xy=545,134
+AudioSynthWaveform       waveform1;       //xy=558,187
+AudioPlaySdWav           playWav1;        //xy=568,235
+AudioMixer4              mixerLeft;       //xy=742,160
+AudioMixer4              mixerRight;      //xy=742,260
+AudioOutputI2S           i2sOut;          //xy=929,215
 AudioConnection          patchCord1(i2sIn, 0, queue1, 0);
-AudioConnection          patchCord2(waveform1, 0, mixer, 0);
-AudioConnection          patchCord3(playWav1, 0, mixer, 1);
-AudioConnection          patchCord4(playWav1, 1, mixer, 2);
-AudioConnection          patchCord5(mixer, 0, i2sOut, 0);
-AudioConnection          patchCord6(mixer, 0, i2sOut, 1);
-AudioControlSGTL5000     sgtl5000_1;     //xy=555,487
-// GUItool: end automatically generated code
+AudioConnection          patchCord2(waveform1, 0, mixerLeft, 0);
+AudioConnection          patchCord3(waveform1, 0, mixerRight, 0);
+AudioConnection          patchCord4(playWav1, 0, mixerLeft, 1);
+AudioConnection          patchCord5(playWav1, 1, mixerRight, 1);
+AudioConnection          patchCord6(mixerLeft, 0, i2sOut, 0);  // Left channel
+AudioConnection          patchCord7(mixerRight, 0, i2sOut, 1); // Right channel
+AudioControlSGTL5000     sgtl5000_1;      //xy=555,487
+
 
 
 // Filename to save audio recording on SD card
@@ -144,8 +146,11 @@ void setup() {
   sgtl5000_1.inputSelect(AUDIO_INPUT_MIC);
   sgtl5000_1.volume(maxVolume);
 
-  mixer.gain(0, 1);
-  mixer.gain(1, 1);
+  mixerLeft.gain(0, 1.0);  // Left channel gain for waveform1
+  mixerLeft.gain(1, 1.0);  // Left channel gain for playWav1
+
+  mixerRight.gain(0, 0.5); // Right channel gain for waveform1
+  mixerRight.gain(1, 0.5); // Right channel gain for playWav1
 
   // Play a beep to indicate system is online
   Serial.println("Starting beep");
@@ -196,6 +201,25 @@ void setup() {
   Serial.println("Beep ended");
 }
 
+void updateVolume() {
+    int val = analogRead(VOLUME_PIN);
+    
+    
+    total = total - readings[readIndex];
+    readings[readIndex] = val;
+    total = total + readings[readIndex];
+    readIndex = (readIndex + 1) % numReadings;
+    
+
+    average = total / numReadings;
+    
+    float mappedValue = map(average, 0, 1024, 0.05, maxVolume);
+    
+    Serial.print("Volume Average: ");
+    Serial.println(mappedValue);
+    sgtl5000_1.volume(mappedValue);
+}
+
 void loop() {
   // First, read the buttons
   buttonRecord.update();
@@ -242,6 +266,7 @@ void loop() {
         }
         
       }
+      
       // Debug message
       Serial.println("Starting Recording");
       // Play the tone sound effect
@@ -281,27 +306,7 @@ void loop() {
   if (currentMillis - previousMillis >= interval) {
     previousMillis = currentMillis;
     
-    // Čtení z analogového pinu
-    int val = analogRead(VOLUME_PIN);
-    
-    // Odečteme poslední hodnotu a přidáme novou
-    total = total - readings[readIndex];
-    readings[readIndex] = val;
-    total = total + readings[readIndex];
-    readIndex = (readIndex + 1) % numReadings;
-    
-    // Výpočet průměru
-    average = total / numReadings;
-    
-    // Mapování a omezení hodnoty
-    float mappedValue = map(average, 0, 1024, 0.05, maxVolume);
-//    if (mappedValue > maxVolume) {
-//      mappedValue = maxVolume;
-//    }
-    
-    Serial.print("Průměrná a mapovaná hodnota je: ");
-    Serial.println(mappedValue);
-    sgtl5000_1.volume(mappedValue);
+    updateVolume();
     
   }
 }
