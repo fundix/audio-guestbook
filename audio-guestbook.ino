@@ -75,7 +75,7 @@ char filename[15];
 // The file object itself
 File frec;
 
-// Use long 40ms debounce time on both switches
+// Use long 120ms debounce time on both switches
 Bounce buttonRecord = Bounce(HOOK_PIN, 120);
 Bounce buttonPlay = Bounce(PLAYBACK_BUTTON_PIN, 120);
 
@@ -103,36 +103,38 @@ byte byte1, byte2, byte3, byte4;
 
 const float maxVolume = 0.7f;
 
-unsigned long previousMillis = 0;  // Proměnná pro uchování času posledního čtení
-const long interval = 500;         // Interval mezi čteními (250 milisekund)
+unsigned long previousMillis = 0;  // Variable for storing the last reading time
+const long interval = 500;         // Interval between reads (250 milliseconds)
 const int numReadings = 10;
 int readings[numReadings];
-int readIndex = 0;                    // Index pro ukládání nového čtení
-float total = 0;                      // Součet pro průměr
-float average = 0;                    // Průměrná hodnota
+int readIndex = 0;                    // Index for storing a new reading
+float total = 0;                      // Sum for average
+float average = 0;                    // Average value
 
 
-void zeroReadings() {
-  for (int i = 0; i < numReadings; i++) {
-    readings[i] = 0;                  // Inicializujeme pole hodnot na 0
-  }
-}
+#define MAX_RECORDING_TIME 30000 // Maximum recording time in milliseconds (30 seconds)
+unsigned long recordingStartMillis = 0; // Variable to store the recording start time
+
+
+void beep_error();
+void updateVolume();
+void zeroVolumeReadings();
+
 
 
 void setup() {
   Serial.begin(9600);
   delay(250);
 
-  zeroReadings();
+  zeroVolumeReadings();
   
-//  while (!Serial && millis() < 5000) {
-//    // wait for serial port to connect.
-//  }
   Serial.println("Serial set up correctly");
   Serial.print("Buffer: ");
   Serial.println(AUDIO_BLOCK_SAMPLES);
   Serial.printf("Audio block set to %d samples\n",AUDIO_BLOCK_SAMPLES);
+  
   print_mode();
+  
   // Configure the input pins
   pinMode(HOOK_PIN, INPUT_PULLUP);
   pinMode(PLAYBACK_BUTTON_PIN, INPUT_PULLUP);
@@ -172,6 +174,7 @@ void setup() {
     // stop here if no SD card, but print a message
     while (1) {
       Serial.println("Unable to access the SD card");
+      beep_error();
       delay(1000);
     }
   }
@@ -201,70 +204,67 @@ void setup() {
   Serial.println("Beep ended");
 }
 
-void updateVolume() {
-    int val = analogRead(VOLUME_PIN);
-    
-    
-    total = total - readings[readIndex];
-    readings[readIndex] = val;
-    total = total + readings[readIndex];
-    readIndex = (readIndex + 1) % numReadings;
-    
 
-    average = total / numReadings;
-    
-    float mappedValue = map(average, 0, 1024, 0.05, maxVolume);
-    
-    Serial.print("Volume Average: ");
-    Serial.println(mappedValue);
-    sgtl5000_1.volume(mappedValue);
-}
+
 
 void loop() {
   // First, read the buttons
   buttonRecord.update();
   buttonPlay.update();
 
-  switch(mode){
+  switch(mode)
+    {
+    //-----------------------------------------------------------
     case Mode::Ready:
       // Falling edge occurs when the handset is lifted --> 611 telephone
       if (buttonRecord.fallingEdge()) {
         Serial.println("Handset lifted");
-        mode = Mode::Prompting; print_mode();
+        mode = Mode::Prompting; 
+        print_mode();
       }
       else if(buttonPlay.fallingEdge()) {
         //playAllRecordings();
         playLastRecording();
       }
+      
       break;
 
+      
+    //------------------------------------------------------------
     case Mode::Prompting:
+    
       // Wait a second for users to put the handset to their ear
       wait(1000);
+      
       // Play the greeting inviting them to record their message
       Serial.println("Play greeting:");
-      playWav1.play("greeting.wav");    
-      // Wait until the  message has finished playing
-//      while (playWav1.isPlaying()) {
-      while (!playWav1.isStopped()) {
+      playWav1.play("greeting.wav");   
+       
+      // Wait until the message has finished playing
+      while (playWav1.isPlaying()) {
         // Check whether the handset is replaced
         Serial.print(".");
         wait(5);
         buttonRecord.update();
         buttonPlay.update();
-        // Handset is replaced
+
+
         if(buttonRecord.risingEdge()) {
           playWav1.stop();
-          mode = Mode::Ready; print_mode();
-          return;
-        }
-        if(buttonPlay.fallingEdge()) {
-          playWav1.stop();
-          //playAllRecordings();
-          playLastRecording();
+          mode = Mode::Ready; 
+          print_mode();
           return;
         }
         
+        if(buttonPlay.fallingEdge()) {
+          playWav1.stop();
+          mode = Mode::Ready;
+          
+          //playAllRecordings();
+          playLastRecording();
+          
+          return;
+        }
       }
       
       // Debug message
@@ -273,12 +273,17 @@ void loop() {
       waveform1.begin(beep_volume, 440, WAVEFORM_SINE);
       wait(1250);
       waveform1.amplitude(0);
+      
       // Start the recording function
       startRecording();
+      
       break;
 
+    //-----------------------------------------------------------
     case Mode::Recording:
+    
       // Handset is replaced
+      // @TODO - recording limit
       if(buttonRecord.risingEdge()){
         // Debug log
         Serial.println("Stopping Recording");
@@ -287,29 +292,31 @@ void loop() {
         // Play audio tone to confirm recording has ended
         end_Beep();
       }
-      else {
+      else { 
         continueRecording();
       }
       break;
-
+      
+    //-----------------------------------------------------------
     case Mode::Playing: // to make compiler happy
-      break;  
-
+      break;
+      
+    //-----------------------------------------------------------
     case Mode::Initialising: // to make compiler happy
       break;  
   }   
   
   MTP.loop();  // This is mandatory to be placed in the loop code.
 
-  unsigned long currentMillis = millis();
 
+  unsigned long currentMillis = millis();
   if (currentMillis - previousMillis >= interval) {
     previousMillis = currentMillis;
-    
     updateVolume();
-    
   }
 }
+
+
 
 void setMTPdeviceChecks(bool nable)
 {
@@ -331,14 +338,18 @@ void setMTPdeviceChecks(bool nable)
 static uint32_t worstSDwrite, printNext;
 #endif // defined(INSTRUMENT_SD_WRITE)
 
+
 void startRecording() {
+  
   setMTPdeviceChecks(false); // disable MTP device checks while recording
+  
 #if defined(INSTRUMENT_SD_WRITE)
   worstSDwrite = 0;
   printNext = 0;
 #endif // defined(INSTRUMENT_SD_WRITE)
+
   // Find the first available file number
-//  for (uint8_t i=0; i<9999; i++) { // BUGFIX uint8_t overflows if it reaches 255  
+  //  for (uint8_t i=0; i<9999; i++) { // BUGFIX uint8_t overflows if it reaches 255  
   for (uint16_t i=0; i<9999; i++) {   
     // Format the counter as a five-digit number with leading zeroes, followed by file extension
     snprintf(filename, 11, " %05d.wav", i);
@@ -347,8 +358,10 @@ void startRecording() {
       break;
     }
   }
+  
   frec = SD.open(filename, FILE_WRITE);
   Serial.println("Opened file !");
+  
   if(frec) {
     Serial.print("Recording to ");
     Serial.println(filename);
@@ -356,16 +369,20 @@ void startRecording() {
     mode = Mode::Recording; 
     print_mode();
     recByteSaved = 0L;
+    recordingStartMillis = millis();
   }
   else {
     Serial.println("Couldn't open file to record!");
   }
 }
 
+
 void continueRecording() {
+  
 #if defined(INSTRUMENT_SD_WRITE)
   uint32_t started = micros();
 #endif // defined(INSTRUMENT_SD_WRITE)
+
 #define NBLOX 16  
   // Check if there is data in the queue
   if (queue1.available() >= NBLOX) {
@@ -397,6 +414,7 @@ void continueRecording() {
   }
 #endif // defined(INSTRUMENT_SD_WRITE)
 }
+
 
 void stopRecording() {
   // Stop adding any new data to the queue
@@ -608,6 +626,25 @@ void end_Beep(void) {
         waveform1.amplitude(0);
 }
 
+void beep_error() {
+        waveform1.frequency(800);
+        waveform1.amplitude(beep_volume);
+        wait(150);
+        waveform1.amplitude(0);
+        wait(150);
+        waveform1.amplitude(beep_volume);
+        wait(150);
+        waveform1.amplitude(0);
+        wait(150);
+        waveform1.amplitude(beep_volume);
+        wait(150);
+        waveform1.amplitude(0);
+        wait(150);
+        waveform1.amplitude(beep_volume);
+        wait(150);
+        waveform1.amplitude(0);  
+}
+
 void print_mode(void) { // only for debugging
   Serial.print("Mode switched to: ");
   // Initialising, Ready, Prompting, Recording, Playing
@@ -617,4 +654,29 @@ void print_mode(void) { // only for debugging
   else if(mode == Mode::Playing)    Serial.println(" Playing");
   else if(mode == Mode::Initialising)  Serial.println(" Initialising");
   else Serial.println(" Undefined");
+}
+
+
+void zeroVolumeReadings() {
+  for (int i = 0; i < numReadings; i++) {
+    readings[i] = 0;                  // Initialize the array of values to 0
+  }
+}
+
+void updateVolume() {
+    int val = analogRead(VOLUME_PIN);
+    
+    total = total - readings[readIndex];
+    readings[readIndex] = val;
+    total = total + readings[readIndex];
+    readIndex = (readIndex + 1) % numReadings;
+    
+
+    average = total / numReadings;
+    
+    float mappedValue = map(average, 0, 1024, 0.05, maxVolume);
+    
+    Serial.print("Volume Average: ");
+    Serial.println(mappedValue);
+    sgtl5000_1.volume(mappedValue);
 }
